@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: eia_postgres
+    environment:
+      POSTGRES_USER: postgres_user
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: eia_data
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data 
+    networks:
+      - data_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_user -d eia_data"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  etl-pipeline:
+    # --- IMPORTANT PATH CHANGES HERE ---
+    build:
+      context: ../               # Docker to builds from the project root
+      dockerfile: docker/Dockerfile # Path to the Dockerfile
+    # -----------------------------------
+    container_name: eia_pyspark_etl
+    env_file:
+      - ../.env                  # Path to the .env file
+    environment:
+      - DB_HOST=postgres 
+      - DB_PORT=5432
+      - DB_USER=postgres_user
+      - DB_PASS=postgres_password
+      - DB_NAME=eia_data
+      - SPARK_DRIVER_MEMORY=2g
+    ports:
+      - "8000:8000" #api port exposed to the host
+    volumes:
+      - ../src:/app/src          # Up one level to find the src folder
+      - delta_lake_data:/tmp/delta 
+    networks:
+      - data_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    working_dir: /app/src
+    command: uvicorn api:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+  delta_lake_data:
+
+networks:
+  data_network:
+    driver: bridge

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nuclear Outages Dashboard</title>
+    <style>
+        body {
+            background-color: #151515;
+            color: #c4c4c4;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 30px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: auto;
+        }
+        h1 {
+            color: #d4af37;
+            border-bottom: 1px solid #333;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 4px;
+            border: 1px solid #333;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-size: 0.85em;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        input {
+            background-color: #2a2a2a;
+            color: #e0e0e0;
+            border: 1px solid #444;
+            padding: 8px 12px;
+            border-radius: 3px;
+            outline: none;
+        }
+        input:focus {
+            border-color: #d4af37;
+        }
+        button {
+            background-color: #d4af37;
+            color: #151515;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-weight: bold;
+            border-radius: 3px;
+            transition: background-color 0.2s;
+            height: 35px;
+        }
+        button:hover {
+            background-color: #b5952f;
+        }
+        .refresh-btn {
+            background-color: #333;
+            color: #d4af37;
+            margin-left: auto;
+            border: 1px solid #444;
+        }
+        .refresh-btn:hover {
+            background-color: #444;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background-color: #1e1e1e;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #2a2a2a;
+        }
+        th {
+            background-color: #111;
+            color: #d4af37;
+            font-weight: 600;
+        }
+        tr:hover {
+            background-color: #252525;
+        }
+        .no-data {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Nuclear Outages Data</h1>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="limit">Limit</label>
+            <input type="number" id="limit" value="100" min="1" max="1000">
+        </div>
+        <div class="control-group">
+            <label for="offset">Offset</label>
+            <input type="number" id="offset" value="0" min="0">
+        </div>
+        <div class="control-group">
+            <label for="period">Date</label>
+            <input type="date" id="period">
+        </div>
+        <div class="control-group">
+            <label for="state">State</label>
+            <input type="text" id="state" placeholder="e.g., NY" maxlength="2">
+        </div>
+        <div class="control-group">
+            <label for="plant">Plant Name</label>
+            <input type="text" id="plant" placeholder="Search plant...">
+        </div>
+        <button onclick="fetchData()">Apply Filters</button>
+        <button class="refresh-btn" onclick="triggerRefresh(this)">Trigger Pipeline Refresh</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Period</th>
+                <th>Plant Name</th>
+                <th>State</th>
+                <th>Capacity</th>
+                <th>Outage (MW)</th>
+            </tr>
+        </thead>
+        <tbody id="table-body">
+            </tbody>
+    </table>
+</div>
+
+<script>
+    const API_BASE_URL = "http://localhost:8000";
+
+    // Fetch data on initial load
+    document.addEventListener("DOMContentLoaded", fetchData);
+
+    async function fetchData() {
+        const tbody = document.getElementById("table-body");
+        
+        // --- NEW: Loading State for the Table ---
+        tbody.innerHTML = `<tr><td colspan="6" class="no-data" style="color: #d4af37;">Loading data... Please wait.</td></tr>`;
+
+        // Gather values from inputs
+        const limit = document.getElementById("limit").value;
+        const offset = document.getElementById("offset").value;
+        const period = document.getElementById("period").value;
+        const state = document.getElementById("state").value;
+        const plant = document.getElementById("plant").value;
+
+        // Construct query parameters
+        const params = new URLSearchParams();
+        if (limit) params.append("limit", limit);
+        if (offset) params.append("offset", offset);
+        if (period) params.append("period", period);
+        if (state) params.append("state", state);
+        if (plant) params.append("plant_name", plant);
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/data?${params.toString()}`);
+            if (!response.ok) throw new Error("Network response was not ok");
+            
+            const result = await response.json();
+            renderTable(result.data);
+        } catch (error) {
+            console.error("Error fetching data:", error);
+            // Error State
+            tbody.innerHTML = `<tr><td colspan="6" class="no-data" style="color: #ff5555;">Failed to load data. Is the API running?</td></tr>`;
+        }
+    }
+
+    function renderTable(data) {
+        const tbody = document.getElementById("table-body");
+        tbody.innerHTML = ""; // Clear the loading message
+
+        if (!data || data.length === 0) {
+            // Empty State
+            tbody.innerHTML = `<tr><td colspan="6" class="no-data">No records found matching these filters.</td></tr>`;
+            return;
+        }
+
+        // Loop through JSON response and build rows
+        data.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td>${row.period}</td>
+                <td>${row.plant_name}</td>
+                <td>${row.state || "N/A"}</td>
+                <td>${row.capacity}</td>
+                <td>${row.outage}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
+    async function triggerRefresh(btnElement) {
+        if (!confirm("This will trigger the background ETL pipeline. Continue?")) return;
+
+        const originalText = btnElement.innerText;
+        btnElement.innerText = "Triggering Pipeline...";
+        btnElement.disabled = true;
+        btnElement.style.opacity = "0.7";
+        btnElement.style.cursor = "not-allowed";
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/refresh`, { method: "POST" });
+            const result = await response.json();
+            alert(result.message); // Success State
+        } catch (error) {
+            console.error("Error triggering refresh:", error);
+            alert("Failed to trigger pipeline refresh. Check console for details."); // Error State
+        } finally {
+            // --- NEW: Reset Button State ---
+            btnElement.innerText = originalText;
+            btnElement.disabled = false;
+            btnElement.style.opacity = "1";
+            btnElement.style.cursor = "pointer";
+        }
+    }
+</script>
+
+</body>
+</html>
