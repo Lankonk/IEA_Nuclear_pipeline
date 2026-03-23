@@ -5,23 +5,26 @@ from postgres import push_to_postgres
 
 logging.basicConfig(level=logging.INFO)
 
-def run_pipeline():
+def run_pipeline(dataset_name: str):
     logging.info("--- STARTING EIA ELT PIPELINE ---")
     
-    # Step 1: Extract (The Bronze Layer)
-    raw_data = get_nuclear_outages()
+    # Extract from the API
+    raw_data = get_nuclear_outages(dataset_name=dataset_name)
     
     if not raw_data:
         logging.error("Pipeline aborted: No data extracted.")
         return
 
-    # Step 2: Transform & Stage (The Silver Layer)
-    upsert_to_delta(raw_data)
+    # Delta lakes
+    df = upsert_to_delta(raw_data,dataset_name)
     
-    # Step 3: Load & Serve (The Gold Layer)
-    push_to_postgres()
+    # Insert into postgres
+    if df:
+        push_to_postgres(df, dataset_name)
+        logging.info("--- PIPELINE SUCCESSFUL ---")
+    else:
+        logging.error("Silver layer failed to return DataFrame.")
     
-    logging.info("--- PIPELINE COMPLETE ---")
 
 if __name__ == "__main__":
     run_pipeline()

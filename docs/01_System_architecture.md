@@ -4,6 +4,11 @@
 
 The IEA Nuclear Pipeline is an ETL (Extract, Transform, Load) system that fetches US nuclear outage data from the EIA API, processes it through a Delta Lake staging layer, and loads it into PostgreSQL for serving via a REST API and dashboard.
 
+The pipeline supports **three datasets**:
+- **facility-nuclear-outages** — facility-level outages
+- **generator-nuclear-outages** — generator-level outages (includes generator name)
+- **us-nuclear-outages** — U.S. national summary (no facility dimension)
+
 **Project Requirements:**
 - API Connection
 - Error handling
@@ -62,21 +67,25 @@ The pipeline follows a **Bronze → Silver → Gold** architecture:
 | Layer  | Component        | Action                                                                 |
 |--------|------------------|------------------------------------------------------------------------|
 | Bronze | `extract_nuclear_data.py` | Fetch raw JSON from EIA API with pagination and retry logic          |
-| Silver | `delta_pyspark.py`       | Transform and upsert (merge) data into Delta tables via PySpark      |
-| Gold   | `postgres.py`            | Load filtered data into PostgreSQL fact and dimension tables         |
+| Silver | `delta_pyspark.py`       | Transform and write to Delta Lake (overwrite per dataset); return DataFrame |
+| Gold   | `postgres.py`            | Load DataFrame into PostgreSQL star-schema tables (fact + dimension)  |
 
 Orchestration is handled by `main.py`:
 
 ```python
-# 1. Extract
-raw_data = get_nuclear_outages()
+def run_pipeline(dataset_name: str):
+    # 1. Extract
+    raw_data = get_nuclear_outages(dataset_name=dataset_name)
 
-# 2. Transform & Stage (Delta)
-upsert_to_delta(raw_data)
+    # 2. Transform & Stage (Delta)
+    df = upsert_to_delta(raw_data, dataset_name)
 
-# 3. Load & Serve (PostgreSQL)
-push_to_postgres()
+    # 3. Load & Serve (PostgreSQL)
+    if df:
+        push_to_postgres(df, dataset_name)
 ```
+
+The pipeline is **dataset-driven**: each run processes a single dataset (e.g. `facility-nuclear-outages`, `generator-nuclear-outages`, `us-nuclear-outages`).
 
 ---
 
@@ -85,12 +94,14 @@ push_to_postgres()
 ### `main.py`
 
 - **Purpose:** ETL orchestration and entry point.
-- **Flow:** Extract → Delta upsert → PostgreSQL load. Aborts if extraction returns no data.
+- **Signature:** `run_pipeline(dataset_name: str)` — runs the full pipeline for a single dataset.
+- **Flow:** Extract → Delta write → PostgreSQL load. Aborts if extraction returns no data. Validates that Delta returns a DataFrame before loading to Postgres.
 
 ### `extract_nuclear_data.py`
 
 - **Purpose:** Fetch nuclear outage data from the EIA v2 API.
-- **Endpoint:** `https://api.eia.gov/v2/nuclear-outages/facility-nuclear-outages/data`
+- **Signature:** `get_nuclear_outages(dataset_name: str, frequency="daily", offset=0, length=1000)`
+- **Endpoint:** `https://api.eia.gov/v2/nuclear-outages/{dataset_name}/data` (URL varies by dataset)
 - **Features:**
   - Pagination (offset/length) until all records are retrieved
   - Retry session for transient HTTP errors (500, 502, 503, 504)
@@ -99,32 +110,37 @@ push_to_postgres()
 
 ### `delta_pyspark.py`
 
-- **Purpose:** Transform raw data and upsert into Delta Lake.
-- **Schema:** `period`, `facility`, `plant_name`, `outage`, `outage-units`, `state`, `capacity`
-- **Logic:** MERGE on `(plant_name, period)` — update existing rows, insert new ones. Creates table if missing.
+- **Purpose:** Transform raw JSON into a Spark DataFrame and write to Delta Lake.
+- **Signature:** `upsert_to_delta(raw_data, dataset_name)` → returns DataFrame.
+- **Schema:** `period`, `facility`, `facilityName`, `generator`, `outage`, `outage-units` (universal schema; missing fields become null).
+- **Logic:** Overwrites Delta table at `{DELTA_TABLE_PATH}/{dataset_name}`. Returns the DataFrame for direct pass-through to PostgreSQL (no re-read).
+- **Spark:** Defines `get_spark_session()` inline with Delta and PostgreSQL JDBC support.
 
 ### `postgres.py`
 
-- **Purpose:** Load data from Delta into PostgreSQL.
+- **Purpose:** Load data from the Spark DataFrame into PostgreSQL star-schema tables.
+- **Signature:** `push_to_postgres(df, dataset_name)` — receives DataFrame directly, not Delta path.
 - **Tables:**
-  - **plants** (dimension): `plant_name`, `state` — mode `ignore` to preserve schema
-  - **annual_outages** (fact): `period`, `plant_name`, `capacity`, `outage` — mode `overwrite`
+  - **dim_facilities** (dimension): `facility_id`, `plant_name` — used by facility and generator datasets; mode `overwrite`
+  - **fact_facility_outages**: `period`, `facility_id`, `outage` — for `facility-nuclear-outages`
+  - **fact_generator_outages**: `period`, `facility_id`, `generator`, `outage` — for `generator-nuclear-outages`
+  - **fact_us_outages**: `period`, `outage` — for `us-nuclear-outages` (no facility join)
 
 ### `spark_Setup.py`
 
 - **Purpose:** Create a Spark session with Delta and PostgreSQL JDBC support.
-- **Extensions:** `DeltaSparkSessionExtension`, `DeltaCatalog`
-- **Packages:** `delta-spark_2.12:3.1.0`, `postgresql:42.6.0`
+- **Note:** Currently not imported by `delta_pyspark.py`, which defines its own `get_spark_session()`. Kept for possible standalone use.
 
 ### `config.py`
 
 - **Purpose:** Central configuration from environment variables.
-- **Config:** `API_KEY`, `EIA_BASE_URL`, `DB_*`, `JDBC_URL`, `DELTA_TABLE_PATH` (`/tmp/delta/eia_nuclear_outages`)
+- **Config:** `API_KEY`, `EIA_BASE_URL`, `DB_*`, `DB_CONFIG` (dict for psycopg2), `PROPERTIES` (dict for JDBC), `JDBC_URL`, `DELTA_TABLE_PATH`.
+- **DB_HOST default:** `"db"` (Docker service name).
 
 ### `postgres_connection.py`
 
 - **Purpose:** PostgreSQL connection factory using `psycopg2`.
-- **Usage:** Used by the FastAPI `/data` endpoint for queries.
+- **Note:** Not used by `api.py`; the API uses `get_db_conn()` with `DB_CONFIG` from `config.py`.
 
 ### `api.py`
 
@@ -134,20 +150,39 @@ push_to_postgres()
 | Method | Path        | Description                                              |
 |--------|-------------|----------------------------------------------------------|
 | GET    | `/dashboard`| Serves the static HTML dashboard                         |
-| POST   | `/refresh`  | Triggers the ETL pipeline as a background task           |
-| GET    | `/data`     | Returns nuclear outage data with filters and pagination  |
+| POST   | `/refresh`  | Triggers the ETL pipeline for a dataset (background)     |
+| GET    | `/data`     | Returns nuclear outage data for a dataset with filters   |
 
 **`/data` query parameters:**
+- `dataset` (default `facility-nuclear-outages`): `facility-nuclear-outages`, `generator-nuclear-outages`, or `us-nuclear-outages`
 - `limit` (1–1000, default 100)
 - `offset` (default 0)
-- `period` (YYYY-MM-DD)
-- `plant_name` (partial, case-insensitive)
-- `state` (partial, case-insensitive)
+- `period` (YYYY-MM-DD) — optional filter
+
+**Dynamic SQL routing:** The `/data` endpoint routes to the appropriate fact/dimension tables based on `dataset`.
 
 ### `static/index.html`
 
-- **Purpose:** Single-page dashboard for nuclear outage data.
-- **Features:** Filters (limit, offset, date, state, plant), table display, and a button to trigger ETL refresh via POST `/refresh`.
+- **Purpose:** Single-page dashboard ("Nuclear Outage Command Center").
+- **Features:**
+  - Dataset selector dropdown (facility, generator, US national)
+  - Date filter (period)
+  - Dynamic table headers/columns based on selected dataset
+  - "Trigger Pipeline" button to run ETL for the selected dataset
+  - Query and refresh operations pass `dataset` parameter to the API
+
+---
+
+## Database Schema (Star Schema)
+
+| Table                   | Type     | Columns                                         | Dataset(s)              |
+|-------------------------|----------|--------------------------------------------------|-------------------------|
+| **dim_facilities**      | Dimension| `facility_id`, `plant_name`                      | facility, generator     |
+| **fact_facility_outages**| Fact    | `period`, `facility_id`, `outage`                | facility-nuclear-outages|
+| **fact_generator_outages**| Fact   | `period`, `facility_id`, `generator`, `outage`   | generator-nuclear-outages|
+| **fact_us_outages**     | Fact     | `period`, `outage`                               | us-nuclear-outages      |
+
+The `/data` API joins fact tables with `dim_facilities` when a facility dimension exists (facility and generator datasets); US national data has no dimension join.
 
 ---
 
@@ -157,9 +192,10 @@ push_to_postgres()
 
 Delta tables sit between extraction and PostgreSQL:
 
-- **Filtering:** Heavy transformations and deduplication are done in Delta (upsert logic).
-- **PostgreSQL:** Stores only curated, filtered data for fast reads.
-- **Benefit:** Keeps complex filtering and large-volume processing out of PostgreSQL, improving query latency for the API and dashboard.
+- **Staging:** Raw data is transformed into a structured DataFrame and persisted to Delta (one folder per dataset).
+- **Pass-through:** The DataFrame is passed directly from Silver to Gold, avoiding a re-read from Delta.
+- **PostgreSQL:** Stores only curated, star-schema data for fast reads.
+- **Benefit:** Keeps complex transformations and large-volume processing out of PostgreSQL, improving query latency for the API and dashboard.
 
 ### PostgreSQL for Serving
 
@@ -184,7 +220,7 @@ Python was chosen for:
 | Variable        | Description              | Default      |
 |-----------------|--------------------------|--------------|
 | `API_KEY`       | EIA API key (required)   | —            |
-| `DB_HOST`       | PostgreSQL host          | `localhost`  |
+| `DB_HOST`       | PostgreSQL host          | `db` (Docker)|
 | `DB_PORT`       | PostgreSQL port          | `5432`       |
 | `DB_USER`       | Database user            | `postgres`   |
 | `DB_PASS`       | Database password        | `password`   |

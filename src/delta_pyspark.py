@@ -1,68 +1,38 @@
 import logging
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
-from delta.tables import DeltaTable
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.functions import col
 from config import DELTA_TABLE_PATH
 from spark_Setup import get_spark_session
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-def upsert_to_delta(raw_data: list, delta_path: str = "/tmp/delta/eia_nuclear_outages"):
+def upsert_to_delta(raw_data, dataset_name):
     """
-    Takes raw dictionary data, converts it to a Spark DataFrame, 
-    and performs a MERGE (upsert) into a Delta table.
+    Converts raw JSON data to a Spark DataFrame, saves it to Delta Lake,
+    and passes it to the PostgreSQL loader for relational modeling.
     """
-    if not raw_data:
-        logging.warning("No data provided to upsert.")
-        return
-
     spark = get_spark_session()
 
-    #Schema definition
+    # Missing fields in the JSON,which depends on the database, will become null.
     schema = StructType([
         StructField("period", StringType(), True),
         StructField("facility", StringType(), True),
         StructField("facilityName", StringType(), True),
+        StructField("generator", StringType(), True),
         StructField("outage", StringType(), True),
-        StructField("outage-units", StringType(), True),
-        # We leave state and capacity here in case the API occasionally includes them
-        StructField("state", StringType(), True),
-        StructField("capacity", StringType(), True)
+        StructField("outage-units", StringType(), True)
     ])
 
-    logging.info("Converting raw data to Spark DataFrame...")
+    logging.info(f"Converting {dataset_name} to Spark DataFrame...")
+    df = spark.createDataFrame(raw_data, schema=schema)
+
+    # String to double conversion
+    df = df.withColumn("outage", col("outage").cast("double"))
+
+    # New folder for each dataset
+    delta_path = f"{DELTA_TABLE_PATH}/{dataset_name}"
+    logging.info(f"Saving to Delta Lake at {delta_path}...")
     
-    #Pyspark dataframe creation
-    updates_df = spark.createDataFrame(raw_data, schema=schema)
+    df.write.format("delta").mode("overwrite").save(delta_path)
 
-    updates_df = updates_df.withColumnRenamed("facilityName", "plant_name") \
-                           .withColumn("capacity", col("capacity").cast("double")) \
-                           .withColumn("outage", col("outage").cast("double")) \
-                           .fillna("Unknown", subset=["state"]) \
-                           .fillna(0.0, subset=["capacity"])
-
-    #If table exists, merge to only update existing info
-    if DeltaTable.isDeltaTable(spark, delta_path):
-        logging.info(f"Existing Delta table found at {delta_path}. Performing MERGE...")
-        
-        # Load Delta table
-        delta_table = DeltaTable.forPath(spark, delta_path)
-
-        #Merge operation
-        (delta_table.alias("target") #existing table
-         .merge(
-            updates_df.alias("updates"), #new data
-            "target.plant_name = updates.plant_name AND target.period = updates.period"
-         )
-         .whenMatchedUpdateAll()
-         .whenNotMatchedInsertAll() #insert new data
-         .execute()
-        )
-        logging.info("MERGE complete.")
-
-    else:
-        # If table doesn't exist, create new table
-        logging.info(f"No existing Delta table found. Creating new table at {delta_path}...")
-        updates_df.write.format("delta").mode("overwrite").save(delta_path)
-        logging.info("Initial Delta table creation complete.")
+    return df
 
