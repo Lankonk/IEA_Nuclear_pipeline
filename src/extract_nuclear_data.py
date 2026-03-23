@@ -1,6 +1,8 @@
 import os
 import requests
 import logging
+import random
+from typing import List, Dict, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -35,15 +37,22 @@ def get_nuclear_outages(dataset_name: str,frequency: str = "daily", offset: int 
             if response.status_code == 403:
                 error_data = response.json()
                 msg = error_data.get("error", {}).get("message", "Invalid API Key")
-                logging.error(f"❌ EIA AUTH ERROR: {msg}")
+                logging.error(f"EIA AUTH ERROR: {msg}")
                 return None
 
             response.raise_for_status()
             payload = response.json()
             
-            logging.info(f"RAW EIA RESPONSE: {payload}")
             # The EIA API nests the data inside a 'response' -> 'data' object
             data_chunk = payload.get("response", {}).get("data", [])
+
+            required_fields = ["period", "outage"] #columns present in all
+
+            if dataset_name != "us-nuclear-outages": #only us-nuclear-outages has no facility
+                required_fields.append("facility")
+
+            if not validate_data_with_sampling(data_chunk, required_fields, sample_rate=0.1):
+                return None
             
             if not data_chunk:
                 logging.info("No more data found. Ending pagination.")
@@ -90,3 +99,34 @@ def create_retry_session(retries=1, backoff_factor=1.0) -> requests.Session:
     session.mount("http://", adapter)
     
     return session
+
+def validate_data_with_sampling(data_chunk: List[Dict[str, Any]], expected_keys: List[str], sample_rate: float = 0.2) -> bool:
+    """
+    Validates a subset of records using an iterator to ensure required fields exist.
+    """
+    if not isinstance(data_chunk, list) or not data_chunk:
+        logging.warning("Validation Warning: No data provided for validation.")
+        return True
+
+    # Determine sample size
+    total_records = len(data_chunk)
+    k = max(1, int(total_records * sample_rate))
+    
+    # Randomly select data
+    sampled_records = random.sample(data_chunk, k)
+    
+    logging.info(f"Validating sample of {k}/{total_records} records...")
+
+    # Outer all() iterates through the sampled list.
+    # Inner all() iterates through the expected keys for each record.
+    is_valid = all(
+        all(key in record for key in expected_keys) 
+        for record in sampled_records
+    ) #iterator
+
+    if not is_valid:
+        logging.error("Validation Failed: One or more sampled records are missing required fields.")
+        return False
+
+    logging.info(f"Validation Passed: Sample check successful.")
+    return True

@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
@@ -12,6 +10,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data 
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - data_network
     healthcheck:
@@ -21,7 +20,6 @@ services:
       retries: 5
 
   etl-pipeline:
-    # --- IMPORTANT PATH CHANGES HERE ---
     build:
       context: ../               # Docker to builds from the project root
       dockerfile: docker/Dockerfile # Path to the Dockerfile
@@ -41,6 +39,7 @@ services:
     volumes:
       - ../src:/app/src          # Up one level to find the src folder
       - delta_lake_data:/tmp/delta 
+      - ../tests:/app/tests
     networks:
       - data_network
     depends_on:

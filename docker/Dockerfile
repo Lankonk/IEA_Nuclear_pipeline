@@ -21,7 +21,9 @@ RUN pip install --no-cache-dir \
     delta-spark==3.1.0 \
     fastapi \
     uvicorn \
-    psycopg2-binary
+    psycopg2-binary \
+    pytest \
+    httpx
 
 # The code will be mounted dynamically via docker-compose volumes, 
 # so we don't need to COPY it during the build step.

@@ -15,45 +15,55 @@ def get_db_conn():
 
 @app.get("/data")
 async def get_data(
-    dataset: str = Query("facility-nuclear-outages", description="The dataset to query"),
+    dataset: str = Query("facility-nuclear-outages"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
-    period: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)")
+    period: Optional[str] = Query(None),
+    facility_id: Optional[str] = Query(None)
 ):
-    """
-    Dynamically fetches data from the selected Fact table, 
-    joining with the Dimension table where necessary.
-    """
+    valid_datasets = ["facility-nuclear-outages", "generator-nuclear-outages", "us-nuclear-outages", "dim_facilities"]
+    if dataset not in valid_datasets:
+        raise HTTPException(status_code=400, detail="Invalid dataset name")
+
     try:
         conn = get_db_conn()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Dynamic SQL Router
+        #queries for each table
         if dataset == "facility-nuclear-outages":
-            query = """
-                SELECT f.period, d.plant_name, f.outage 
-                FROM fact_facility_outages f
-                JOIN dim_facilities d ON f.facility_id = d.facility_id
-            """
+            query = "SELECT f.period, d.plant_name, f.outage FROM fact_facility_outages f JOIN dim_facilities d ON f.facility_id = d.facility_id"
+            prefix = "f" # used to distinguish between table columns
         elif dataset == "generator-nuclear-outages":
-            query = """
-                SELECT f.period, d.plant_name, f.generator, f.outage 
-                FROM fact_generator_outages f
-                JOIN dim_facilities d ON f.facility_id = d.facility_id
-            """
+            query = "SELECT f.period, d.plant_name, f.generator, f.outage FROM fact_generator_outages f JOIN dim_facilities d ON f.facility_id = d.facility_id"
+            prefix = "f"
         elif dataset == "us-nuclear-outages":
-            # National data has no facility join
             query = "SELECT period, outage FROM fact_us_outages"
+            prefix = "" # no join so no prefix
         else:
-            raise HTTPException(status_code=400, detail="Invalid dataset name")
+            query = "SELECT facility_id, plant_name FROM dim_facilities"
+            prefix = ""
 
-        # Add filtering and pagination
+        # all filters to a list
+        where_clauses = []
         params = []
+
         if period:
-            query += " WHERE period = %s"
+            where_clauses.append(f"{prefix + '.' if prefix else ''}period = %s")
             params.append(period)
 
-        query += " ORDER BY period DESC LIMIT %s OFFSET %s"
+        # Only filter by plant if a specific one is selected
+        if facility_id and facility_id != "facility-nuclear-outages":
+            where_clauses.append(f"{prefix + '.' if prefix else ''}facility_id = %s")
+            params.append(facility_id)
+
+        if where_clauses:
+            query += " WHERE " + " AND ".join(where_clauses)
+
+        #add order by where the data can be ordered
+        if dataset != "dim_facilities":
+            query += f" ORDER BY {prefix + '.' if prefix else ''}period DESC"
+        
+        query += " LIMIT %s OFFSET %s"
         params.extend([limit, offset])
 
         cursor.execute(query, tuple(params))
@@ -75,6 +85,31 @@ async def refresh_data(
 
     background_tasks.add_task(run_pipeline, dataset) #extracts info from the api
     return {"status": "accepted", "message": f"Pipeline started for {dataset}"}
+
+@app.get("/facilities")
+async def get_facilities():
+    try:
+        conn = get_db_conn()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Simple query to get the lookup list
+        query = "SELECT facility_id, plant_name FROM dim_facilities ORDER BY plant_name ASC" #gets all facilities
+        
+        cursor.execute(query)
+        results = cursor.fetchall()
+        
+        cursor.close()
+        conn.close()
+        return results
+
+    except Exception as e:
+        logging.error(f"Error fetching metadata: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve facility list")
+
+@app.get("/monitor")
+async def serve_monitor():
+    """Serves the new Cinder Outage Monitor page."""
+    return FileResponse('/app/src/static/monitor.html')
 
 @app.get("/dashboard")
 async def serve_dashboard(): #loads index.html
