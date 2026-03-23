@@ -104,12 +104,18 @@
             <input type="date" id="period" onchange="fetchData()">
         </div>
         <div>
-            <button onclick="fetchData()">Query Database</button>
+            <button onclick="fetchData()">Refresh Database</button>
         </div>
         <div>
-            <button id="refreshBtn" onclick="triggerRefresh()">🔥 Trigger Pipeline</button>
+            <button id="refreshBtn" onclick="triggerRefresh()">Trigger Pipeline</button>
             <div id="statusMsg" class="status"></div>
         </div>
+    </div>
+    <div>
+        <label for="monitorBtn">System Health</label>
+        <button id="monitorBtn" onclick="window.location.href='/monitor'" style="background: var(--stone); color: var(--gold); border: 1px solid var(--gold);">
+            Advanced filtering
+        </button>
     </div>
 
     <table id="dataTable">
@@ -190,7 +196,7 @@
             return;
         }
 
-        // 1. DYNAMIC HEADERS
+        //dynamic headers
         let headers = ['Period'];
         if (dataset !== 'us-nuclear-outages') headers.push('Plant Name');
         if (dataset === 'generator-nuclear-outages') headers.push('Generator');
@@ -200,7 +206,7 @@
         headers.forEach(h => headerRow += `<th>${h}</th>`);
         head.innerHTML = headerRow + '</tr>';
 
-        // 2. DYNAMIC ROWS
+        //dynamic rows
         data.forEach(row => {
             let rowHtml = `<tr><td>${row.period}</td>`;
             if (dataset !== 'us-nuclear-outages') rowHtml += `<td>${row.plant_name}</td>`;
