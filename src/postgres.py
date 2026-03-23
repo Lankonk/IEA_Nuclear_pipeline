@@ -35,7 +35,7 @@ def push_to_postgres(df, dataset_name):
         fact_df = df.select(
             to_date(col("period"), "yyyy-MM-dd").alias("period"),
             col("facility").alias("facility_id"),
-            col("outage").cast("double")
+            col("outage").cast("double").dropDuplicates(["period", "facility_id"])
         )
     elif dataset_name == "generator-nuclear-outages":
         table_name = "fact_generator_outages"
@@ -43,7 +43,7 @@ def push_to_postgres(df, dataset_name):
             to_date(col("period"), "yyyy-MM-dd").alias("period"),
             col("facility").alias("facility_id"),
             col("generator"),
-            col("outage").cast("double")
+            col("outage").cast("double").dropDuplicates(["period", "facility_id"])
         )
     elif dataset_name == "us-nuclear-outages":
         table_name = "fact_us_outages"
