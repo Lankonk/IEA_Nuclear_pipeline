@@ -3,240 +3,230 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nuclear Outages Dashboard</title>
+    <title>Nuclear Outage Command Center</title>
     <style>
+        :root {
+            --bg-dark: #1a1a1a;
+            --stone: #2d2d2d;
+            --ember: #ff9d00;
+            --ash: #a0a0a0;
+            --gold: #d4af37;
+        }
+
         body {
-            background-color: #151515;
-            color: #c4c4c4;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--ash);
             margin: 0;
-            padding: 30px;
-        }
-        .container {
-            max-width: 1200px;
-            margin: auto;
-        }
-        h1 {
-            color: #d4af37;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
-        }
-        .controls {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 20px;
-            background-color: #1e1e1e;
             padding: 20px;
-            border-radius: 4px;
-            border: 1px solid #333;
-            align-items: flex-end;
-            flex-wrap: wrap;
         }
-        .control-group {
+
+        .container { max-width: 1200px; margin: auto; }
+
+        header {
+            border-bottom: 2px solid var(--stone);
+            padding-bottom: 20px;
+            margin-bottom: 30px;
             display: flex;
-            flex-direction: column;
-            gap: 5px;
+            justify-content: space-between;
+            align-items: center;
         }
-        label {
-            font-size: 0.85em;
-            color: #888;
-            text-transform: uppercase;
-            letter-spacing: 1px;
+
+        h1 { color: var(--ember); margin: 0; text-transform: uppercase; letter-spacing: 2px; }
+
+        .controls {
+            background: var(--stone);
+            padding: 20px;
+            border-radius: 8px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+            border-left: 4px solid var(--gold);
         }
-        input {
-            background-color: #2a2a2a;
-            color: #e0e0e0;
+
+        label { display: block; margin-bottom: 8px; font-weight: bold; color: var(--gold); }
+
+        select, input, button {
+            width: 100%;
+            padding: 10px;
+            background: #111;
             border: 1px solid #444;
-            padding: 8px 12px;
-            border-radius: 3px;
-            outline: none;
+            color: white;
+            border-radius: 4px;
         }
-        input:focus {
-            border-color: #d4af37;
-        }
+
         button {
-            background-color: #d4af37;
-            color: #151515;
-            border: none;
-            padding: 10px 20px;
-            cursor: pointer;
+            background: var(--ember);
+            color: black;
             font-weight: bold;
-            border-radius: 3px;
-            transition: background-color 0.2s;
-            height: 35px;
+            cursor: pointer;
+            border: none;
+            transition: 0.3s;
+            margin-top: 24px;
         }
-        button:hover {
-            background-color: #b5952f;
-        }
-        .refresh-btn {
-            background-color: #333;
-            color: #d4af37;
-            margin-left: auto;
-            border: 1px solid #444;
-        }
-        .refresh-btn:hover {
-            background-color: #444;
-        }
+
+        button:hover { background: var(--gold); transform: translateY(-2px); }
+
         table {
             width: 100%;
             border-collapse: collapse;
-            background-color: #1e1e1e;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            background: var(--stone);
+            border-radius: 8px;
+            overflow: hidden;
         }
-        th, td {
-            padding: 12px 15px;
-            text-align: left;
-            border-bottom: 1px solid #2a2a2a;
-        }
-        th {
-            background-color: #111;
-            color: #d4af37;
-            font-weight: 600;
-        }
-        tr:hover {
-            background-color: #252525;
-        }
-        .no-data {
-            text-align: center;
-            padding: 20px;
-            color: #888;
-        }
+
+        th { background: #222; color: var(--gold); text-align: left; padding: 15px; border-bottom: 2px solid #444; }
+        td { padding: 12px 15px; border-bottom: 1px solid #333; }
+        tr:hover { background: #353535; }
+
+        .status { font-style: italic; color: var(--ember); margin-top: 10px; height: 20px; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>Nuclear Outages Data</h1>
+    <header>
+        <h1>Nuclear Outages <span style="font-weight: 200;">| Command Center</span></h1>
+    </header>
 
     <div class="controls">
-        <div class="control-group">
-            <label for="limit">Limit</label>
-            <input type="number" id="limit" value="100" min="1" max="1000">
+        <div>
+            <label for="dataset">Target Dataset</label>
+            <select id="dataset" onchange="fetchData()">
+                <option value="facility-nuclear-outages">Facility Level Outages</option>
+                <option value="generator-nuclear-outages">Generator Level Outages</option>
+                <option value="us-nuclear-outages">U.S. National Summary</option>
+            </select>
         </div>
-        <div class="control-group">
-            <label for="offset">Offset</label>
-            <input type="number" id="offset" value="0" min="0">
+        <div>
+            <label for="period">Filter by Date</label>
+            <input type="date" id="period" onchange="fetchData()">
         </div>
-        <div class="control-group">
-            <label for="period">Date</label>
-            <input type="date" id="period">
+        <div>
+            <button onclick="fetchData()">Query Database</button>
         </div>
-        <div class="control-group">
-            <label for="state">State</label>
-            <input type="text" id="state" placeholder="e.g., NY" maxlength="2">
+        <div>
+            <button id="refreshBtn" onclick="triggerRefresh()">🔥 Trigger Pipeline</button>
+            <div id="statusMsg" class="status"></div>
         </div>
-        <div class="control-group">
-            <label for="plant">Plant Name</label>
-            <input type="text" id="plant" placeholder="Search plant...">
-        </div>
-        <button onclick="fetchData()">Apply Filters</button>
-        <button class="refresh-btn" onclick="triggerRefresh(this)">Trigger Pipeline Refresh</button>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Period</th>
-                <th>Plant Name</th>
-                <th>State</th>
-                <th>Capacity</th>
-                <th>Outage (MW)</th>
-            </tr>
-        </thead>
-        <tbody id="table-body">
-            </tbody>
+    <table id="dataTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
     </table>
 </div>
 
 <script>
-    const API_BASE_URL = "http://localhost:8000";
-
-    // Fetch data on initial load
-    document.addEventListener("DOMContentLoaded", fetchData);
+    const API_BASE = "http://localhost:8000";
 
     async function fetchData() {
-        const tbody = document.getElementById("table-body");
-        
-        // --- NEW: Loading State for the Table ---
-        tbody.innerHTML = `<tr><td colspan="6" class="no-data" style="color: #d4af37;">Loading data... Please wait.</td></tr>`;
+        const dataset = document.getElementById('dataset').value;
+        const period = document.getElementById('period').value;
+        const body = document.getElementById('tableBody');
+        const head = document.getElementById('tableHead');
 
-        // Gather values from inputs
-        const limit = document.getElementById("limit").value;
-        const offset = document.getElementById("offset").value;
-        const period = document.getElementById("period").value;
-        const state = document.getElementById("state").value;
-        const plant = document.getElementById("plant").value;
+        // if there is nothing in the HTML, stop
+        if (!body || !head) return;
 
-        // Construct query parameters
-        const params = new URLSearchParams();
-        if (limit) params.append("limit", limit);
-        if (offset) params.append("offset", offset);
-        if (period) params.append("period", period);
-        if (state) params.append("state", state);
-        if (plant) params.append("plant_name", plant);
+        body.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 40px;">Searching...</td></tr>';
 
         try {
-            const response = await fetch(`${API_BASE_URL}/data?${params.toString()}`);
-            if (!response.ok) throw new Error("Network response was not ok");
+            let url = `${API_BASE}/data?dataset=${dataset}`;
+            if (period) url += `&period=${period}`;
             
-            const result = await response.json();
-            renderTable(result.data);
-        } catch (error) {
-            console.error("Error fetching data:", error);
-            // Error State
-            tbody.innerHTML = `<tr><td colspan="6" class="no-data" style="color: #ff5555;">Failed to load data. Is the API running?</td></tr>`;
-        }
-    }
+            const response = await fetch(url);
+            if (!response.ok) {
+            throw new Error(`Server responded with ${response.status}`);
+            }
+            const data = await response.json();
 
-    function renderTable(data) {
-        const tbody = document.getElementById("table-body");
-        tbody.innerHTML = ""; // Clear the loading message
-
-        if (!data || data.length === 0) {
-            // Empty State
-            tbody.innerHTML = `<tr><td colspan="6" class="no-data">No records found matching these filters.</td></tr>`;
+            //empty database
+            if (!data || data.length === 0) { 
+            head.innerHTML = '';
+            body.innerHTML = `
+                <tr>
+                    <td colspan="5" style="text-align: center; padding: 60px; border: 1px solid var(--stone);">
+                        <div style="color: var(--gold); font-size: 1.2em;">The archives are empty for this date.</div>
+                        <div style="color: var(--ash); margin-top: 5px;">Try a different date or trigger the pipeline.</div>
+                    </td>
+                </tr>`;
             return;
         }
 
-        // Loop through JSON response and build rows
+            renderTable(data, dataset);
+        } catch (err) { //network errors
+            console.error("Pipeline Error:", err);
+            head.innerHTML = '';
+            body.innerHTML = `
+            <tr>
+                <td colspan="5" style="text-align: center; padding: 50px; color: var(--ember);">
+                    <strong>System Error</strong><br>
+                    <small>${err.message}</small>
+                </td>
+            </tr>`;
+        }
+    }
+
+    function renderTable(data, dataset) {
+        if (!data || data.length === 0) {
+    body.innerHTML = `
+        <tr>
+            <td colspan="5" style="text-align: center; padding: 60px;">
+                <div style="color: var(--gold); font-size: 1.2em;">The archives are empty.</div>
+                <div style="color: var(--ash); margin-top: 5px;">Trigger the pipeline to populate this dataset.</div>
+            </td>
+        </tr>`;
+    return;
+}
+        const head = document.getElementById('tableHead');
+        const body = document.getElementById('tableBody');
+        head.innerHTML = '';
+        body.innerHTML = '';
+
+        if (!data || data.length === 0) {
+            body.innerHTML = '<tr><td colspan="5">No data found for this selection.</td></tr>';
+            return;
+        }
+
+        // 1. DYNAMIC HEADERS
+        let headers = ['Period'];
+        if (dataset !== 'us-nuclear-outages') headers.push('Plant Name');
+        if (dataset === 'generator-nuclear-outages') headers.push('Generator');
+        headers.push('Outage (MW)');
+
+        let headerRow = '<tr>';
+        headers.forEach(h => headerRow += `<th>${h}</th>`);
+        head.innerHTML = headerRow + '</tr>';
+
+        // 2. DYNAMIC ROWS
         data.forEach(row => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td>${row.period}</td>
-                <td>${row.plant_name}</td>
-                <td>${row.state || "N/A"}</td>
-                <td>${row.capacity}</td>
-                <td>${row.outage}</td>
-            `;
-            tbody.appendChild(tr);
+            let rowHtml = `<tr><td>${row.period}</td>`;
+            if (dataset !== 'us-nuclear-outages') rowHtml += `<td>${row.plant_name}</td>`;
+            if (dataset === 'generator-nuclear-outages') rowHtml += `<td>${row.generator || 'N/A'}</td>`;
+            rowHtml += `<td>${row.outage.toLocaleString()}</td></tr>`;
+            body.innerHTML += rowHtml;
         });
     }
 
-    async function triggerRefresh(btnElement) {
-        if (!confirm("This will trigger the background ETL pipeline. Continue?")) return;
-
-        const originalText = btnElement.innerText;
-        btnElement.innerText = "Triggering Pipeline...";
-        btnElement.disabled = true;
-        btnElement.style.opacity = "0.7";
-        btnElement.style.cursor = "not-allowed";
-
+    async function triggerRefresh() {
+        const dataset = document.getElementById('dataset').value;
+        const msg = document.getElementById('statusMsg');
+        msg.innerText = "Pipeline started in background...";
+        
         try {
-            const response = await fetch(`${API_BASE_URL}/refresh`, { method: "POST" });
-            const result = await response.json();
-            alert(result.message); // Success State
-        } catch (error) {
-            console.error("Error triggering refresh:", error);
-            alert("Failed to trigger pipeline refresh. Check console for details."); // Error State
-        } finally {
-            // --- NEW: Reset Button State ---
-            btnElement.innerText = originalText;
-            btnElement.disabled = false;
-            btnElement.style.opacity = "1";
-            btnElement.style.cursor = "pointer";
+            await fetch(`${API_BASE}/refresh?dataset=${dataset}`, { method: 'POST' });
+            setTimeout(() => {
+                msg.innerText = "Pipeline likely complete. Click Query to update.";
+            }, 5000);
+        } catch (err) {
+            msg.innerText = "Error triggering pipeline.";
         }
     }
+
+    // Initial load
+    fetchData();
 </script>
 
 </body>

@@ -6,14 +6,14 @@ from urllib3.util.retry import Retry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def get_nuclear_outages(frequency: str = "daily", offset: int = 0, length: int = 1000):
+def get_nuclear_outages(dataset_name: str,frequency: str = "daily", offset: int = 0, length: int = 1000):
     API_KEY = os.getenv("API_KEY")
 
     if not API_KEY:
         logging.error("Error: API_KEY is not set")
         return None
 
-    base_url = "https://api.eia.gov/v2/nuclear-outages/facility-nuclear-outages/data"
+    base_url = f"https://api.eia.gov/v2/nuclear-outages/{dataset_name}/data"
     session = create_retry_session() #retry in case of network errors
 
     data = []
@@ -26,16 +26,23 @@ def get_nuclear_outages(frequency: str = "daily", offset: int = 0, length: int =
             "frequency": frequency,
             "data[0]": "outage",
             "offset": offset,
-            "length": length
+            "length": length #length of each pagination
         }
 
         try:
             response = session.get(base_url, params=params, timeout=10)
+
+            if response.status_code == 403:
+                error_data = response.json()
+                msg = error_data.get("error", {}).get("message", "Invalid API Key")
+                logging.error(f"❌ EIA AUTH ERROR: {msg}")
+                return None
+
             response.raise_for_status()
             payload = response.json()
             
             logging.info(f"RAW EIA RESPONSE: {payload}")
-            # The EIA v2 API nests the actual data inside a 'response' -> 'data' object
+            # The EIA API nests the data inside a 'response' -> 'data' object
             data_chunk = payload.get("response", {}).get("data", [])
             
             if not data_chunk:
@@ -54,7 +61,7 @@ def get_nuclear_outages(frequency: str = "daily", offset: int = 0, length: int =
             #go to next page
             offset += length
 
-            if offset >= 5000:
+            if offset >= 5000: #max 5 pages
                 logging.info("Safety brake engaged: Stopping at 5,000 records.")
                 break
 

@@ -1,46 +1,67 @@
 import logging
-from spark_Setup import get_spark_session
-from config import DELTA_TABLE_PATH, JDBC_URL, DB_USER, DB_PASS
+from pyspark.sql.functions import col
+from config import JDBC_URL, PROPERTIES
 
-#recieves delta table path as argument
-def push_to_postgres(delta_path: str = DELTA_TABLE_PATH):
+def push_to_postgres(df, dataset_name):
 
-    spark = get_spark_session()
+    logging.info(f"Routing data for {dataset_name} to PostgreSQL serving layer...")
+
+    # (Runs for facility and generator datasets only)
+    if dataset_name in ["facility-nuclear-outages", "generator-nuclear-outages"]:
+        logging.info("Updating Dimension Table: dim_facilities...")
+        
+        # Select facility ID and Name, rename them, and drop duplicates
+        dim_facilities_df = df.select(
+            col("facility").alias("facility_id"),
+            col("facilityName").alias("plant_name")
+        ).dropDuplicates(["facility_id"]).na.drop(subset=["facility_id"])
+        
+        # Write to Postgres using 'overwrite' to ensure the schema stays fresh
+        dim_facilities_df.write.jdbc(
+            url=JDBC_URL, 
+            table="dim_facilities", 
+            mode="overwrite", 
+            properties=PROPERTIES
+        )
     
-    db_url = JDBC_URL
-    db_properties = {
-        "user": DB_USER,
-        "password": DB_PASS,
-        "driver": "org.postgresql.Driver",
-        "stringtype": "unspecified" 
-    }
+    # Facility Level Outages
+    if dataset_name == "facility-nuclear-outages":
+        table_name = "fact_facility_outages"
+        fact_df = df.select(
+            col("period"), 
+            col("facility").alias("facility_id"), 
+            col("outage")
+        )
 
-    logging.info(f"Reading Gold-tier data from Delta table at {delta_path}...")
-    try:
-        # Load the data from Delta
-        df = spark.read.format("delta").load(delta_path)
-    except Exception as e:
-        logging.error(f"Failed to read Delta table: {e}. Did you run the extraction script first?")
+    #  Generator Level Outages (With 'generator' column)
+    elif dataset_name == "generator-nuclear-outages":
+        table_name = "fact_generator_outages"
+        fact_df = df.select(
+            col("period"), 
+            col("facility").alias("facility_id"), 
+            col("generator"), 
+            col("outage")
+        )
+
+    # CASE C: U.S. National Outages (Has no facility ID)
+    elif dataset_name == "us-nuclear-outages":
+        table_name = "fact_us_outages"
+        fact_df = df.select(
+            col("period"), 
+            col("outage")
+        )
+    
+    else:
+        logging.error(f"Unknown dataset name received: {dataset_name}")
         return
 
-    logging.info("Extracting unique plants for the dimension table...")
-    plants_df = df.select("plant_name", "state").distinct()
+    # Write the specific fact table to Postgres
+    logging.info(f"Writing Fact Table: {table_name}...")
+    fact_df.write.jdbc(
+        url=JDBC_URL, 
+        table=table_name, 
+        mode="overwrite", 
+        properties=PROPERTIES
+    )
     
-    #Ignore protects against overwriting the table structure
-    logging.info("Writing to Postgres table: plants...")
-    plants_df.write.jdbc(url=db_url, 
-                         table="plants", 
-                         mode="ignore", 
-                         properties=db_properties)
-
-    logging.info("Preparing fact table data...")
-    outages_df = df.select("period", "plant_name", "capacity", "outage")
-    
-    #Since Delta already handled not inserting duplicates, we can safely overwrite the table
-    logging.info("Writing to Postgres table: annual_outages...")
-    outages_df.write.jdbc(url=db_url, 
-                          table="annual_outages", 
-                          mode="overwrite", 
-                          properties=db_properties)
-    
-    logging.info("Data successfully loaded into PostgreSQL serving layer!")
+    logging.info(f"Successfully loaded {dataset_name} into PostgreSQL!")
