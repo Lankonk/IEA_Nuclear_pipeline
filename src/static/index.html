@@ -218,8 +218,8 @@
         try {
             await fetch(`${API_BASE}/refresh?dataset=${dataset}`, { method: 'POST' });
             setTimeout(() => {
-                msg.innerText = "Pipeline likely complete. Click Query to update.";
-            }, 5000);
+                msg.innerText = "Pipeline has probably finished. Click Query to update.";
+            }, 10000);
         } catch (err) {
             msg.innerText = "Error triggering pipeline.";
         }

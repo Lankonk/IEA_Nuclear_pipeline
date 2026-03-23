@@ -24,11 +24,15 @@ async def get_data(
     Dynamically fetches data from the selected Fact table, 
     joining with the Dimension table where necessary.
     """
+    valid_datasets = ["facility-nuclear-outages", "generator-nuclear-outages", "us-nuclear-outages"]
+    if dataset not in valid_datasets:
+        raise HTTPException(status_code=400, detail="Invalid dataset name")
+
+    # Only operations go in the try block
     try:
         conn = get_db_conn()
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # Dynamic SQL Router
         if dataset == "facility-nuclear-outages":
             query = """
                 SELECT f.period, d.plant_name, f.outage 
@@ -41,12 +45,9 @@ async def get_data(
                 FROM fact_generator_outages f
                 JOIN dim_facilities d ON f.facility_id = d.facility_id
             """
-        elif dataset == "us-nuclear-outages":
-            # National data has no facility join
+        else: # We know it's "us-nuclear-outages" because of the check above
             query = "SELECT period, outage FROM fact_us_outages"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid dataset name")
-
+            
         # Add filtering and pagination
         params = []
         if period:
